@@ -10,9 +10,6 @@ const itemSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    uniqueMarks: {
-      type: String,
-    },
     location: {
       type: String,
       required: true,
@@ -36,20 +33,13 @@ const itemSchema = new mongoose.Schema(
         },
       },
     ],
-    questions: [
-      {
-        question: {
-          type: String,
-        },
-        answer: {
-          type: String,
-        },
-      },
-    ],
+    reportedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
     foundBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
     },
     receivedBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -69,16 +59,8 @@ const itemSchema = new mongoose.Schema(
     rejectionReason: {
       type: String,
     },
-    isVisible: {
-      type: Boolean,
-      default: false,
-    },
     token: {
       type: String,
-    },
-    tokenUsed: {
-      type: Boolean,
-      default: false,
     },
     tokenVerifiedAt: {
       type: Date,

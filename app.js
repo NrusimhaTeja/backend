@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const connectDB = require("./config/database");
 const errorHandler = require("./middleware/errorHandler");
+const cookieParser = require("cookie-parser");
 require("dotenv").config();
 
 // Import routes
