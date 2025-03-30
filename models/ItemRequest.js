@@ -17,23 +17,17 @@ const itemRequestSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-    requestedTo: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+    token: {
+      type: String,
     },
     status: {
       type: String,
-      enum: ["pending", "verified", "verification_failed", "cancelled"],
+      enum: ["pending", "approved", "rejected"],
       default: "pending",
     },
     answers: [
       {
-        question: {
-          type: String,
-        },
-        answer: {
-          type: String,
-        },
+        type: String,
       },
     ],
     proofImages: [
@@ -49,21 +43,9 @@ const itemRequestSchema = new mongoose.Schema(
     additionalNotes: {
       type: String,
     },
-    preferredContactMethod: {
-      type: String,
-      enum: ["email", "phone"],
-      default: "email",
-    },
-    appointmentTimeSlot: {
-      type: String,
-    },
     requestDate: {
       type: Date,
       default: Date.now,
-    },
-    verifiedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
     },
     verificationNotes: {
       type: String,

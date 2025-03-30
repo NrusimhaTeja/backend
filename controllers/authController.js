@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const uploadToCloudinary = require("../utils/uploadToCloudinary");
 
 exports.register = async (req, res) => {
   try {

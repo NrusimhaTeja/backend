@@ -16,7 +16,7 @@ const itemSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["lost", "submitted", "received", "claimed", "rejected"],
+      enum: ["lost", "submitted", "received", "claimed", "verified", "rejected"],
       required: true,
     },
     time: {
@@ -53,6 +53,9 @@ const itemSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    verifiedDescription: {
+      type: String,
+    },
     securityNotes: {
       type: String,
     },
@@ -64,7 +67,12 @@ const itemSchema = new mongoose.Schema(
     },
     tokenVerifiedAt: {
       type: Date,
-    }
+    },
+    questions: [
+      {
+        type: String,
+      },
+    ],
   },
   {
     timestamps: true,

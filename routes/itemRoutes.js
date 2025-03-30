@@ -5,7 +5,6 @@ const userAuth = require("../utils/userAuth");
 const roleAuth = require("../utils/roleAuth");
 const { upload } = require("../config/cloudinary");
 
-
 // Report lost item
 router.post(
   "/report/lost",
@@ -29,6 +28,15 @@ router.put(
   roleAuth(["securityGuard"]),
   itemController.reviewItem
 );
+
+//verify by (security Officer)
+router.post(
+  "/:id/verify",
+  userAuth,
+  roleAuth(["securityOfficer"]),
+  itemController.verifyItem
+);
+
 
 // Claim item
 router.post(
@@ -54,25 +62,20 @@ router.get(
   itemController.getItemByToken
 );
 
-// Get available time slots
-router.get(
-  "/time-slots",
-  userAuth,
-  itemController.getTimeSlots
-);
+// Get user's item tokens
+router.get("/my-item-tokens", userAuth, itemController.getUserItemTokens);
 
-// Get user's tokens
-router.get(
-  "/my-tokens",
-  userAuth,
-  itemController.getUserTokens
-);
+// Get user's request tokens
+router.get("/my-request-tokens", userAuth, itemController.getUserRequestTokens);
+
+// Get received requests by security Officer
+router.get("/received-requests", userAuth, roleAuth(["securityOfficer"]), itemController.getreceivedRequests);
 
 // Get items by status
-router.get(
-  "/status/:status",
-  userAuth,
-  itemController.getItemsByStatus
-);
+router.get("/status/:status", userAuth, itemController.getItemsByStatus);
+
+//verify claim request
+router.post('/verify/:id', userAuth, roleAuth(["securityOfficer"]), itemController.verifyClaimRequest);
+
 
 module.exports = router;

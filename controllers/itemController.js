@@ -8,15 +8,15 @@ exports.reportLostItem = async (req, res) => {
   try {
     // Extract required fields
     const { itemType, description } = req.body;
-    
+
     // Extract optional fields
     const { location, date, time } = req.body;
     const { _id } = req.user;
-    
+
     // Check required fields
     if (!itemType || !description) {
-      return res.status(400).json({ 
-        message: "Item type and description are required fields" 
+      return res.status(400).json({
+        message: "Item type and description are required fields",
       });
     }
 
@@ -40,7 +40,7 @@ exports.reportLostItem = async (req, res) => {
     let timestamp;
     if (date && time) {
       timestamp = new Date(`${date}T${time}`);
-      
+
       // Validate the timestamp
       if (isNaN(timestamp.getTime())) {
         timestamp = new Date(); // Use current date/time if invalid
@@ -59,7 +59,7 @@ exports.reportLostItem = async (req, res) => {
       reportedBy: _id,
       images: imageUrls,
     });
-    
+
     await item.save();
 
     res.status(201).json({
@@ -170,7 +170,7 @@ exports.reviewItem = async (req, res) => {
     res.status(200).json({
       message:
         status === "received"
-          ? "Item verified and published to the website"
+          ? "Item received by security. Pending verification for listing."
           : "Item rejected",
       item,
     });
@@ -184,7 +184,7 @@ exports.reviewItem = async (req, res) => {
 exports.claimItem = async (req, res) => {
   try {
     const { id } = req.params;
-    const { additionalNotes, timeSlot } = req.body;
+    const { additionalNotes, answers } = req.body;
     const { _id } = req.user;
 
     const item = await Item.findById(id);
@@ -192,7 +192,7 @@ exports.claimItem = async (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
-    if (item.status !== "received") {
+    if (item.status !== "verified") {
       return res.status(400).json({
         message: "This item is not available for claiming",
       });
@@ -210,29 +210,88 @@ exports.claimItem = async (req, res) => {
       }
     }
 
+    // Generate token for the claim request
+    const requestToken = generateToken.generateItemToken();
+
     // Create the claim request
     const itemRequest = new ItemRequest({
       itemId: id,
       requestType: "claim",
       requestedBy: _id,
-      requestedTo: item.receivedBy,
       status: "pending",
+      answers: answers || [],
       proofImages,
       additionalNotes,
-      preferredContactMethod: preferredContactMethod || "email",
-      appointmentTimeSlot: timeSlot, // Add the selected time slot
       requestDate: new Date(),
+      token: requestToken, // Adding token field (You'll need to add this to your schema)
     });
 
     await itemRequest.save();
 
     res.status(201).json({
       message:
-        "Claim request submitted successfully. Please visit the lost and found center at your selected time slot.",
+        "Claim request submitted successfully. Please present this token to the security office when you visit to collect the item.",
       itemRequest,
+      token: requestToken, // Returning the token separately for emphasis
     });
   } catch (err) {
     console.error("Error claiming item:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+//verify by security officer
+exports.verifyItem = async (req, res) => {
+  try {
+    const { id } = req.params;
+    let verifiedDescription = req.body.verifiedDescription;
+    let questions = req.body.questions;
+    
+    // Handle case when questions is a JSON string (from FormData)
+    if (typeof questions === 'string') {
+      try {
+        questions = JSON.parse(questions);
+      } catch (err) {
+        console.error("Error parsing questions:", err);
+        return res.status(400).json({ message: "Invalid questions format" });
+      }
+    }
+    
+    const { _id } = req.user;
+    
+    console.log("Verified Description:", verifiedDescription);
+    console.log("Questions:", questions);
+    
+    // Find the item
+    const item = await Item.findById(id);
+    if (!item) {
+      return res.status(404).json({ message: "Item not found" });
+    }
+    
+    // Check if item is already verified
+    if (item.status === "verified") {
+      return res.status(400).json({
+        message: "This item has already been verified",
+      });
+    }
+    
+    // Update the item status to verified
+    item.status = "verified";
+    item.verifiedBy = _id;
+    item.verificationDate = new Date();
+    item.verifiedDescription = verifiedDescription;
+        
+    // Add questions for claiming
+    item.questions = questions || [];
+      
+    await item.save();
+    
+    res.status(200).json({
+      message: "Item has been verified and is now available for claiming",
+      item,
+    });
+  } catch (err) {
+    console.error("Error verifying item:", err.message);
     res.status(500).json({ message: err.message });
   }
 };
@@ -292,46 +351,47 @@ exports.verifyClaim = async (req, res) => {
 exports.getItemByToken = async (req, res) => {
   try {
     const { token } = req.params;
+    const userRole = req.user.role;
 
-    const item = await Item.findOne({ token, status: "submitted" })
-    if (!item) {
-      return res.status(404).json({ message: "No item found with this token" });
+    // Handle based on role and token type
+    if (userRole === "securityGuard") {
+      const item = await Item.findOne({token});
+      if (item && item.status === "submitted") {
+        return res.status(200).json({ item });
+      } else {
+        return res
+          .status(403)
+          .json({
+            message: "Security guards can only access submitted item tokens",
+          });
+      }
+    } else if (userRole === "securityOfficer") {
+      const request = ItemRequest.findOne({token}).populate("itemId");
+      if (request && request.status === "verified") {
+        return res.status(200).json({ request });
+      } else {
+        return res
+          .status(403)
+          .json({
+            message:
+              "Security officers can only access verified request tokens",
+          });
+      }
     }
 
-    res.status(200).json({
-      message: "Item found",
-      item,
-    });
-  } catch (err) {
-    console.error("Error looking up item by token:", err.message);
-    res.status(500).json({ message: err.message });
+    return res
+      .status(404)
+      .json({
+        message: "Token not found or you don't have permission to access it",
+      });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Server error" });
   }
 };
 
-// Get available time slots
-exports.getTimeSlots = async (req, res) => {
-  try {
-    // Get date from query parameters
-    const { date } = req.query;
-    if (!date) {
-      return res.status(400).json({ message: "Date parameter is required" });
-    }
-
-    // Get available time slots for the requested date
-    const availableSlots = await timeSlots.getAvailableTimeSlots(date);
-
-    res.json({
-      date,
-      availableSlots,
-    });
-  } catch (err) {
-    console.error("Error fetching time slots:", err.message);
-    res.status(500).json({ message: err.message });
-  }
-};
-
-// Get user's tokens
-exports.getUserTokens = async (req, res) => {
+// Get user's item tokens
+exports.getUserItemTokens = async (req, res) => {
   try {
     const { _id } = req.user;
 
@@ -341,6 +401,24 @@ exports.getUserTokens = async (req, res) => {
     }).select("itemType description location images status token time");
 
     res.json(items);
+  } catch (err) {
+    console.error("Error fetching user's item tokens:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get user's request tokens
+exports.getUserRequestTokens = async (req, res) => {
+  try {
+    const { _id } = req.user;
+
+    const requests = await ItemRequest.find({
+      requestedBy: _id,
+      status: "pending",
+    }).populate("itemId").select("verifiedDescription images status token time");
+    console.log(requests);
+
+    res.json(requests);
   } catch (err) {
     console.error("Error fetching user's item tokens:", err.message);
     res.status(500).json({ error: err.message });
@@ -357,6 +435,7 @@ exports.getItemsByStatus = async (req, res) => {
       "lost",
       "received",
       "submitted",
+      "verified",
       "claimed",
       "rejected",
     ];
@@ -365,7 +444,7 @@ exports.getItemsByStatus = async (req, res) => {
     }
 
     // Role-based access control for different statuses
-    if (role === "user" && !["lost", "received"].includes(status)) {
+    if (role === "user" && !["lost", "verified"].includes(status)) {
       return res.status(403).json({
         message: "Access denied. Users can only view lost and received items.",
       });
@@ -373,7 +452,7 @@ exports.getItemsByStatus = async (req, res) => {
 
     if (
       role === "securityGuard" &&
-      !["lost", "received", "submitted"].includes(status)
+      !["lost", "verified", "submitted"].includes(status)
     ) {
       return res.status(403).json({
         message:
@@ -394,5 +473,70 @@ exports.getItemsByStatus = async (req, res) => {
   } catch (err) {
     console.error("Error fetching items:", err.message);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.getreceivedRequests = async(req, res) => {
+  try {
+    const { _id } = req.user;
+
+    const requests = await ItemRequest.find({
+      status: "pending",
+    }).populate("itemId");
+    console.log(requests);
+
+    res.json(requests);
+  } catch (err) {
+    console.error("Error fetching user's item tokens:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+// Verify or reject an item claim request
+exports.verifyClaimRequest = async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const { status } = req.body; // 'approved' or 'rejected'
+    
+    if (status !== 'approved' && status !== 'rejected') {
+      return res.status(400).json({ message: 'Invalid status provided' });
+    }
+    
+    // Find the item request
+    const itemRequest = await ItemRequest.findById(requestId);
+    
+    if (!itemRequest) {
+      return res.status(404).json({ message: 'Item request not found' });
+    }
+    
+    // Find the associated item
+    const item = await Item.findById(itemRequest.itemId);
+    
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+    
+    // Update the item request status
+    itemRequest.status = status;
+    itemRequest.verificationDate = new Date();
+    
+    // Update the item status based on the verification decision
+    if (status === 'approved') {
+      item.status = 'claimed';
+      item.claimedBy = itemRequest.requestedBy;
+    } 
+    
+    // Save both the request and item
+    await Promise.all([itemRequest.save(), item.save()]);
+    
+    return res.status(200).json({
+      message: status === 'approved' ? 'Claim approved successfully' : 'Claim rejected successfully',
+      itemRequest,
+      item
+    });
+  } catch (error) {
+    console.error('Error processing claim verification:', error);
+    return res.status(500).json({ message: 'Failed to process claim verification' });
   }
 };
