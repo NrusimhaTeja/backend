@@ -87,6 +87,7 @@ exports.login = async (req, res) => {
     const isValidUser = await bcrypt.compare(password, user.password);
     if (isValidUser) {
       const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY);
+      console.log("from login: " + token);
       res.cookie("token", token, {
         httpOnly: true, 
         secure: process.env.NODE_ENV === "production", 
