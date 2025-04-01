@@ -78,6 +78,7 @@ exports.register = async (req, res) => {
 
 exports.login = async (req, res) => {
   try {
+    console.log("hello");
     const { email, password } = req.body;
     const user = await User.findOne({ email });
     if (!user) {
@@ -86,7 +87,12 @@ exports.login = async (req, res) => {
     const isValidUser = await bcrypt.compare(password, user.password);
     if (isValidUser) {
       const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY);
-      res.cookie("token", token);
+      res.cookie("token", token, {
+        httpOnly: true, 
+        secure: process.env.NODE_ENV === "production", 
+        sameSite: "strict", 
+      });
+      
       res.send(user);
     } else {
       return res.json({ message: "Invalid Credentials" });

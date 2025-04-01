@@ -5,6 +5,7 @@ const User = require("../models/User")
 const userAuth = async (req, res, next) => {
     try {
         const {token} = req.cookies;
+        console.log(token);
         if (!token) {
             res.status(401).error("Please login");
         }
