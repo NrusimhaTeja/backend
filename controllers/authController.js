@@ -89,11 +89,11 @@ exports.login = async (req, res) => {
       const token = jwt.sign({ userId: user._id }, process.env.SECRET_KEY);
       console.log("from login: " + token);
       res.cookie("token", token, {
-        httpOnly: true, 
-        secure: process.env.NODE_ENV === "production", 
-        sameSite: "strict", 
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
       });
-      
+
       res.send(user);
     } else {
       return res.json({ message: "Invalid Credentials" });
@@ -108,5 +108,3 @@ exports.logout = (req, res) => {
   res.cookie("token", null, { maxAge: 0 });
   res.json({ message: "user logged out successfully" });
 };
-
-
