@@ -25,7 +25,7 @@ router.post(
 router.put(
   "/:id/review",
   userAuth,
-  roleAuth(["securityGuard"]),
+  roleAuth(["securityGuard", "securityOfficer"]),
   itemController.reviewItem
 );
 
