@@ -2,7 +2,6 @@ const Item = require("../models/Item");
 const ItemRequest = require("../models/ItemRequest");
 const uploadToCloudinary = require("../utils/uploadToCloudinary");
 const generateToken = require("../utils/generateToken");
-const timeSlots = require("../utils/timeSlots");
 
 exports.reportLostItem = async (req, res) => {
   try {
