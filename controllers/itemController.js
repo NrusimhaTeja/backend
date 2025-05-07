@@ -1,7 +1,6 @@
 const Item = require("../models/Item");
 const ItemRequest = require("../models/ItemRequest");
 const uploadToCloudinary = require("../utils/uploadToCloudinary");
-const generateToken = require("../utils/generateToken");
 
 exports.reportLostItem = async (req, res) => {
   try {
@@ -57,6 +56,7 @@ exports.reportLostItem = async (req, res) => {
       time: timestamp,
       reportedBy: _id,
       images: imageUrls,
+      imagesPublic: true,
     });
 
     await item.save();
@@ -100,10 +100,7 @@ exports.reportFoundItem = async (req, res) => {
       timestamp = new Date();
     }
 
-    // Generate token for the item
-    const itemToken = generateToken.generateItemToken();
-
-    // Create the item object
+    // Create the item object without token first
     const item = new Item({
       itemType,
       description,
@@ -112,9 +109,16 @@ exports.reportFoundItem = async (req, res) => {
       status: role === "user" ? "submitted" : "received",
       foundBy: _id,
       images: imageUrls,
-      token: itemToken,
     });
 
+    // Save the item to get its _id
+    await item.save();
+
+    // Now generate token using the item's _id
+    const itemToken = `ITEM-${item._id}`;
+
+    // Update the item with the token
+    item.token = itemToken;
     await item.save();
 
     res.status(201).json({
@@ -128,6 +132,7 @@ exports.reportFoundItem = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
 // Review found item by security guard
 exports.reviewItem = async (req, res) => {
   try {
@@ -209,29 +214,33 @@ exports.claimItem = async (req, res) => {
       }
     }
 
-    // Generate token for the claim request
-    const requestToken = generateToken.generateItemToken();
-
-    // Create the claim request
+    // Create the claim request without token first
     const itemRequest = new ItemRequest({
       itemId: id,
       requestType: "claim",
-      requestedBy: _id,
+      requestedBy: _id, // Fixed the typo here from *id to _id
       status: "pending",
       answers: answers || [],
       proofImages,
       additionalNotes,
       requestDate: new Date(),
-      token: requestToken, // Adding token field (You'll need to add this to your schema)
     });
 
+    // Save to get the _id
+    await itemRequest.save();
+
+    // Generate token for the claim request using the request's _id
+    const requestToken = `REQUEST-${itemRequest._id}`;
+
+    // Update with the token
+    itemRequest.token = requestToken;
     await itemRequest.save();
 
     res.status(201).json({
       message:
         "Claim request submitted successfully. Please present this token to the security office when you visit to collect the item.",
       itemRequest,
-      token: requestToken, // Returning the token separately for emphasis
+      token: requestToken,
     });
   } catch (err) {
     console.error("Error claiming item:", err.message);
@@ -245,9 +254,10 @@ exports.verifyItem = async (req, res) => {
     const { id } = req.params;
     let verifiedDescription = req.body.verifiedDescription;
     let questions = req.body.questions;
-    
+    let imagesPublic = req.body.imagesPublic || false;
+
     // Handle case when questions is a JSON string (from FormData)
-    if (typeof questions === 'string') {
+    if (typeof questions === "string") {
       try {
         questions = JSON.parse(questions);
       } catch (err) {
@@ -255,36 +265,43 @@ exports.verifyItem = async (req, res) => {
         return res.status(400).json({ message: "Invalid questions format" });
       }
     }
-    
+
+    // Convert imagesPublic to boolean if it's a string
+    if (typeof imagesPublic === "string") {
+      imagesPublic = imagesPublic.toLowerCase() === "true";
+    }
+
     const { _id } = req.user;
-    
+
     console.log("Verified Description:", verifiedDescription);
     console.log("Questions:", questions);
-    
+    console.log("Images Public:", imagesPublic);
+
     // Find the item
     const item = await Item.findById(id);
     if (!item) {
       return res.status(404).json({ message: "Item not found" });
     }
-    
+
     // Check if item is already verified
     if (item.status === "verified") {
       return res.status(400).json({
         message: "This item has already been verified",
       });
     }
-    
+
     // Update the item status to verified
     item.status = "verified";
     item.verifiedBy = _id;
     item.verificationDate = new Date();
     item.verifiedDescription = verifiedDescription;
-        
+    item.imagesPublic = imagesPublic;
+
     // Add questions for claiming
     item.questions = questions || [];
-      
+
     await item.save();
-    
+
     res.status(200).json({
       message: "Item has been verified and is now available for claiming",
       item,
@@ -352,39 +369,59 @@ exports.getItemByToken = async (req, res) => {
     const { token } = req.params;
     const userRole = req.user.role;
 
-    // Handle based on role and token type
-    if (userRole === "securityGuard") {
-      const item = await Item.findOne({token});
-      if (item && item.status === "submitted") {
+    // Determine if it's an item token or request token
+    if (token.startsWith("ITEM-")) {
+      // Extract item ID from token
+      const itemId = token.replace("ITEM-", "");
+
+      // Find item by its ID
+      const item = await Item.findById(itemId);
+
+      if (!item) {
+        return res.status(404).json({ message: "Item not found" });
+      }
+
+      // Check permissions based on role
+      if (userRole === "securityGuard" && item.status === "submitted") {
+        return res.status(200).json({ item });
+      } else if (userRole === "securityOfficer" || userRole === "admin") {
+        // Security officers and admins can access any item
         return res.status(200).json({ item });
       } else {
-        return res
-          .status(403)
-          .json({
-            message: "Security guards can only access submitted item tokens",
-          });
+        return res.status(403).json({
+          message: "You don't have permission to access this item",
+        });
       }
-    } else if (userRole === "securityOfficer") {
-      const request = ItemRequest.findOne({token}).populate("itemId");
-      if (request && request.status === "verified") {
+    } else if (token.startsWith("REQUEST-")) {
+      // Extract request ID from token
+      const requestId = token.replace("REQUEST-", "");
+
+      // Find request by its ID
+      const request = await ItemRequest.findById(requestId).populate("itemId");
+
+      if (!request) {
+        return res.status(404).json({ message: "Request not found" });
+      }
+
+      // Check permissions based on role
+      if (userRole === "securityOfficer" && request.status === "pending") {
+        return res.status(200).json({ request });
+      } else if (userRole === "admin") {
+        // Admins can access any request
         return res.status(200).json({ request });
       } else {
-        return res
-          .status(403)
-          .json({
-            message:
-              "Security officers can only access verified request tokens",
-          });
+        return res.status(403).json({
+          message: "You don't have permission to access this request",
+        });
       }
-    }
-
-    return res
-      .status(404)
-      .json({
-        message: "Token not found or you don't have permission to access it",
+    } else {
+      // Invalid token format
+      return res.status(400).json({
+        message: "Invalid token format",
       });
+    }
   } catch (error) {
-    console.error(error);
+    console.error("Error retrieving by token:", error.message);
     return res.status(500).json({ message: "Server error" });
   }
 };
@@ -409,15 +446,37 @@ exports.getUserItemTokens = async (req, res) => {
 // Get user's request tokens
 exports.getUserRequestTokens = async (req, res) => {
   try {
-    const { _id } = req.user;
-
+    const { _id, role } = req.user;
+    
     const requests = await ItemRequest.find({
       requestedBy: _id,
       status: "pending",
-    }).populate("itemId").select("verifiedDescription images status token time");
-    console.log(requests);
-
-    res.json(requests);
+    })
+      .populate("itemId")
+      .select("verifiedDescription images status token time");
+    
+    // Process each request to handle image visibility
+    const processedRequests = requests.map(request => {
+      // Convert to plain JavaScript object
+      const plainRequest = request.toObject();
+      
+      // Check if the populated itemId has images that should be hidden
+      if (plainRequest.itemId && !plainRequest.itemId.imagesPublic) {
+        // Hide images from the item if not public
+        plainRequest.itemId.images = [];
+      }
+      
+      // Also check the request's own images if applicable
+      if (plainRequest.images && !plainRequest.imagesPublic) {
+        plainRequest.images = [];
+      }
+      
+      return plainRequest;
+    });
+    
+    console.log("Processed requests:", processedRequests);
+    
+    res.json(processedRequests);
   } catch (err) {
     console.error("Error fetching user's item tokens:", err.message);
     res.status(500).json({ error: err.message });
@@ -429,7 +488,7 @@ exports.getItemsByStatus = async (req, res) => {
   try {
     const status = req.params.status;
     const { _id, role } = req.user;
-
+    
     const validStatuses = [
       "lost",
       "received",
@@ -441,41 +500,54 @@ exports.getItemsByStatus = async (req, res) => {
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ message: "Invalid status requested" });
     }
-
+    
     // Role-based access control for different statuses
     if (role === "user" && !["lost", "verified"].includes(status)) {
       return res.status(403).json({
-        message: "Access denied. Users can only view lost and received items.",
+        message: "Access denied. Users can only view lost and verified items.",
       });
     }
-
+    
     if (
       role === "securityGuard" &&
       !["lost", "verified", "submitted"].includes(status)
     ) {
       return res.status(403).json({
         message:
-          "Access denied. Security guards can only view lost, received, and submitted items.",
+          "Access denied. Security guards can only view lost, verified, and submitted items.",
       });
     }
-
+    
     // Initialize query with status filter
     const query = { status };
-
-    const itemList = await Item.find(query);
-
-    if (itemList.length === 0) {
+    
+    // First, get the items as Mongoose documents
+    const items = await Item.find(query);
+    
+    if (items.length === 0) {
       return res.json({ message: "No items found", items: [] });
     }
-
+    
+    // Process the items based on role and convert to plain objects
+    const itemList = items.map(item => {
+      // Convert to plain JavaScript object
+      const plainItem = item.toObject();
+      
+      // For user role, check if images should be hidden
+      if (status === "verified" && !plainItem.imagesPublic) {
+        plainItem.images = []; // Replace images with empty array when not public
+      }
+      
+      return plainItem;
+    });
+    
     res.json(itemList);
   } catch (err) {
     console.error("Error fetching items:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 };
-
-exports.getreceivedRequests = async(req, res) => {
+exports.getreceivedRequests = async (req, res) => {
   try {
     const { _id } = req.user;
 
@@ -491,51 +563,55 @@ exports.getreceivedRequests = async(req, res) => {
   }
 };
 
-
 // Verify or reject an item claim request
 exports.verifyClaimRequest = async (req, res) => {
   try {
     const requestId = req.params.id;
     const { status } = req.body; // 'approved' or 'rejected'
-    
-    if (status !== 'approved' && status !== 'rejected') {
-      return res.status(400).json({ message: 'Invalid status provided' });
+
+    if (status !== "approved" && status !== "rejected") {
+      return res.status(400).json({ message: "Invalid status provided" });
     }
-    
+
     // Find the item request
     const itemRequest = await ItemRequest.findById(requestId);
-    
+
     if (!itemRequest) {
-      return res.status(404).json({ message: 'Item request not found' });
+      return res.status(404).json({ message: "Item request not found" });
     }
-    
+
     // Find the associated item
     const item = await Item.findById(itemRequest.itemId);
-    
+
     if (!item) {
-      return res.status(404).json({ message: 'Item not found' });
+      return res.status(404).json({ message: "Item not found" });
     }
-    
+
     // Update the item request status
     itemRequest.status = status;
     itemRequest.verificationDate = new Date();
-    
+
     // Update the item status based on the verification decision
-    if (status === 'approved') {
-      item.status = 'claimed';
+    if (status === "approved") {
+      item.status = "claimed";
       item.claimedBy = itemRequest.requestedBy;
-    } 
-    
+    }
+
     // Save both the request and item
     await Promise.all([itemRequest.save(), item.save()]);
-    
+
     return res.status(200).json({
-      message: status === 'approved' ? 'Claim approved successfully' : 'Claim rejected successfully',
+      message:
+        status === "approved"
+          ? "Claim approved successfully"
+          : "Claim rejected successfully",
       itemRequest,
-      item
+      item,
     });
   } catch (error) {
-    console.error('Error processing claim verification:', error);
-    return res.status(500).json({ message: 'Failed to process claim verification' });
+    console.error("Error processing claim verification:", error);
+    return res
+      .status(500)
+      .json({ message: "Failed to process claim verification" });
   }
 };

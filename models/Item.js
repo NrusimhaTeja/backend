@@ -33,6 +33,10 @@ const itemSchema = new mongoose.Schema(
         },
       },
     ],
+    imagesPublic: {
+      type: Boolean,
+      default: false,
+    },
     reportedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
